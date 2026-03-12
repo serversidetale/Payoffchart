@@ -42,6 +42,14 @@ func RenderPayoff(w io.Writer, strategy payoff.Strategy, spotMin, spotMax float6
 		charts.WithTitleOpts(opts.Title{
 			Title:    title,
 			Subtitle: subtitle,
+			Top:      "10px",
+		}),
+		charts.WithGridOpts(opts.Grid{
+			Top:          "18%",
+			Left:         "12%",
+			Right:        "8%",
+			Bottom:       "15%",
+			ContainLabel: true,
 		}),
 		charts.WithXAxisOpts(opts.XAxis{
 			Name: "Underlying price",

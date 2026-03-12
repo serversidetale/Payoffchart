@@ -93,3 +93,47 @@ func (s Strategy) PayoffSeries(spotMin, spotMax float64, numPoints int) (prices 
 	}
 	return prices, payoffs
 }
+
+// PayoffStats holds summary stats for the strategy at expiry over the given spot range.
+type PayoffStats struct {
+	MaxProfit  float64   // max payoff in range
+	MaxLoss    float64   // min payoff in range
+	RewardRisk float64   // MaxProfit / |MaxLoss| when MaxLoss < 0, else 0 or Inf
+	Breakevens []float64 // spot prices where payoff crosses zero (linear interpolation)
+}
+
+// Stats computes PayoffStats over [spotMin, spotMax] using numPoints samples.
+func (s Strategy) Stats(spotMin, spotMax float64, numPoints int) PayoffStats {
+	prices, payoffs := s.PayoffSeries(spotMin, spotMax, numPoints)
+	var maxP, minP float64
+	if len(payoffs) > 0 {
+		maxP, minP = payoffs[0], payoffs[0]
+	}
+	for _, p := range payoffs {
+		if p > maxP {
+			maxP = p
+		}
+		if p < minP {
+			minP = p
+		}
+	}
+	rewardRisk := 0.0
+	if minP < 0 && maxP > 0 {
+		rewardRisk = maxP / (-minP)
+	} else if minP >= 0 {
+		rewardRisk = 0 // no risk
+	}
+	// breakevens: crossings of zero (linear interpolation between points)
+	var breakevens []float64
+	for i := 1; i < len(payoffs); i++ {
+		p0, p1 := payoffs[i-1], payoffs[i]
+		if (p0 < 0 && p1 >= 0) || (p0 >= 0 && p1 < 0) {
+			s0, s1 := prices[i-1], prices[i]
+			if p1 != p0 {
+				t := (0 - p0) / (p1 - p0)
+				breakevens = append(breakevens, s0+t*(s1-s0))
+			}
+		}
+	}
+	return PayoffStats{MaxProfit: maxP, MaxLoss: minP, RewardRisk: rewardRisk, Breakevens: breakevens}
+}

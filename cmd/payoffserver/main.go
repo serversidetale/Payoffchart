@@ -358,16 +358,20 @@ func handleChart(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	var chartBuf bytes.Buffer
+	if err := chart.RenderPayoff(&chartBuf, strategy, spotMin, spotMax, title, renderOpts); err != nil {
+		log.Printf("render: %v", err)
+		http.Error(w, "failed to render chart", http.StatusInternalServerError)
+		return
+	}
+	chartHTML := chartBuf.String()
+
+	// Payoff stats (at expiry)
+	stats := strategy.Stats(spotMin, spotMax, 500)
+	statsHTML := buildStatsHTML(stats)
+
+	// Optional: form to change days to expiry when before-expiry curve is shown
 	if daysToExpiry > 0 {
-		// Render chart to buffer so we can inject "change days" form
-		var chartBuf bytes.Buffer
-		if err := chart.RenderPayoff(&chartBuf, strategy, spotMin, spotMax, title, renderOpts); err != nil {
-			log.Printf("render: %v", err)
-			http.Error(w, "failed to render chart", http.StatusInternalServerError)
-			return
-		}
-		chartHTML := chartBuf.String()
-		// Build form to change days to expiry (resubmit with same strategy)
 		var formBuf strings.Builder
 		formBuf.WriteString(`<div style="margin:1rem 20px; padding:0.75rem; background:#f0f4f8; border-radius:6px; font-family:system-ui,sans-serif;"><form method="POST" action="/chart">`)
 		formBuf.WriteString(`<label>Days to expiry: <input type="number" name="days_to_expiry" value="` + strconv.Itoa(daysToExpiry) + `" min="1" style="width:4rem; padding:0.25rem;">`)
@@ -381,17 +385,43 @@ func handleChart(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		formBuf.WriteString(`</form></div>`)
-		// Inject form before </body>
-		if idx := strings.LastIndex(chartHTML, "</body>"); idx != -1 {
-			chartHTML = chartHTML[:idx] + formBuf.String() + "\n" + chartHTML[idx:]
-		}
-		if _, err := w.Write([]byte(chartHTML)); err != nil {
-			log.Printf("write: %v", err)
-		}
-		return
+		statsHTML = statsHTML + "\n" + formBuf.String()
 	}
-	if err := chart.RenderPayoff(w, strategy, spotMin, spotMax, title, renderOpts); err != nil {
-		log.Printf("render: %v", err)
-		http.Error(w, "failed to render chart", http.StatusInternalServerError)
+
+	if idx := strings.LastIndex(chartHTML, "</body>"); idx != -1 {
+		chartHTML = chartHTML[:idx] + statsHTML + "\n" + chartHTML[idx:]
 	}
+	if _, err := w.Write([]byte(chartHTML)); err != nil {
+		log.Printf("write: %v", err)
+	}
+}
+
+func buildStatsHTML(stats payoff.PayoffStats) string {
+	formatNum := func(x float64) string {
+		if x >= 1000 || (x > -1000 && x < 1000 && x != 0) {
+			return strconv.FormatFloat(x, 'f', 2, 64)
+		}
+		return strconv.FormatFloat(x, 'f', 0, 64)
+	}
+	var b strings.Builder
+	b.WriteString(`<div style="margin:1rem 20px; padding:0.75rem; background:#f5f5f5; border-radius:6px; font-family:system-ui,sans-serif; font-size:14px;"><strong>At expiry (over range):</strong><br>`)
+	b.WriteString(`Max Profit: ` + formatNum(stats.MaxProfit) + ` &nbsp;|&nbsp; Max Loss: ` + formatNum(stats.MaxLoss))
+	rr := "—"
+	if stats.MaxLoss < 0 && stats.MaxProfit > 0 {
+		rr = strconv.FormatFloat(stats.RewardRisk, 'f', 2, 64)
+	}
+	b.WriteString(` &nbsp;|&nbsp; Reward/Risk: ` + rr + `<br>`)
+	b.WriteString(`Breakeven: `)
+	if len(stats.Breakevens) > 0 {
+		for i, be := range stats.Breakevens {
+			if i > 0 {
+				b.WriteString(`, `)
+			}
+			b.WriteString(formatNum(be))
+		}
+	} else {
+		b.WriteString(`—`)
+	}
+	b.WriteString(`</div>`)
+	return b.String()
 }
