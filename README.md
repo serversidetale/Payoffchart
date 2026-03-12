@@ -20,6 +20,8 @@ go run ./cmd/payoffserver
 
 Then open **http://localhost:8080**. Enter chart title, spot range (min–max), **days to expiry** (0 = at-expiry only; &gt;0 adds a “Before expiry” curve via Black-Scholes), **volatility %** and **risk-free rate %** (used when days to expiry &gt; 0). Use **+ Add leg** / **Remove** to add or remove legs (no fixed limit). Click **Generate Payoff Chart** to get the chart.
 
+**Derive σ and r:** Open **http://localhost:8080/derive**. Enter Spot, Strike, Days to expiry, Call premium, Put premium, and Dividend yield % (same strike). Submit to get implied **r** and **σ** from put-call parity and Black-Scholes; use these in the payoff chart for Volatility % and Risk-free rate %.
+
 ## Before-expiry P&L
 
 If you set **days to expiry** &gt; 0 (and volatility + rate), the chart shows two curves:

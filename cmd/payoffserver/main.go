@@ -39,6 +39,7 @@ const formHTML = `<!DOCTYPE html>
 </head>
 <body>
   <h1>Options Payoff Chart</h1>
+  <p><a href="/derive">Derive σ and r</a> from call &amp; put premiums (same strike).</p>
   <p>Add/remove legs as needed. Premium is per share. Optionally show P&L before expiry (Black-Scholes).</p>
   <form action="/chart" method="POST" id="payoffForm">
     <div>
@@ -149,9 +150,65 @@ const formHTML = `<!DOCTYPE html>
 </html>
 `
 
+const deriveFormHTML = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Derive σ and r</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 520px; margin: 2rem auto; padding: 0 1rem; }
+    h1 { font-size: 1.35rem; }
+    label { display: inline-block; min-width: 10rem; margin-bottom: 0.25rem; }
+    input { padding: 0.35rem; margin-bottom: 0.5rem; }
+    .row { margin-bottom: 0.75rem; }
+    button { padding: 0.5rem 1rem; background: #333; color: #fff; border: none; border-radius: 6px; cursor: pointer; }
+    button:hover { background: #555; }
+    .hint { font-size: 0.85rem; color: #666; margin-top: 0.2rem; }
+    .result { background: #e8f5e9; padding: 1rem; border-radius: 6px; margin: 1rem 0; }
+    .error { background: #ffebee; padding: 1rem; border-radius: 6px; margin: 1rem 0; }
+    a { color: #066; }
+  </style>
+</head>
+<body>
+  <h1>Derive σ and r from call &amp; put</h1>
+  <p>Enter spot, strike, days to expiry, call premium, put premium, and dividend yield. Same S, K, T for both options.</p>
+  <p><a href="/">← Payoff chart</a></p>
+  <form action="/derive" method="POST">
+    <div class="row">
+      <label>Spot (S)</label><br>
+      <input type="number" name="spot" step="any" required placeholder="e.g. 1950">
+    </div>
+    <div class="row">
+      <label>Strike (K)</label><br>
+      <input type="number" name="strike" step="any" required placeholder="e.g. 1950">
+    </div>
+    <div class="row">
+      <label>Days to expiry</label><br>
+      <input type="number" name="days" min="1" required placeholder="e.g. 8">
+    </div>
+    <div class="row">
+      <label>Call premium (per share)</label><br>
+      <input type="number" name="call_premium" step="any" required placeholder="e.g. 130">
+    </div>
+    <div class="row">
+      <label>Put premium (per share)</label><br>
+      <input type="number" name="put_premium" step="any" required placeholder="e.g. 80">
+    </div>
+    <div class="row">
+      <label>Dividend yield %</label><br>
+      <input type="number" name="div_pct" step="any" value="0" min="0" placeholder="0">
+      <span class="hint">e.g. 0 or 1.5 for 1.5%</span>
+    </div>
+    <button type="submit">Derive σ and r</button>
+  </form>
+</body>
+</html>
+`
+
 func main() {
 	http.HandleFunc("/", handleForm)
 	http.HandleFunc("/chart", handleChart)
+	http.HandleFunc("/derive", handleDerive)
 	addr := ":8080"
 	log.Printf("Payoff chart server at http://localhost%s", addr)
 	log.Fatal(http.ListenAndServe(addr, nil))
@@ -166,6 +223,34 @@ func handleForm(w http.ResponseWriter, r *http.Request) {
 	if err := t.Execute(w, nil); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
+}
+
+func handleDerive(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if r.Method != http.MethodPost {
+		_, _ = w.Write([]byte(deriveFormHTML))
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		_, _ = w.Write([]byte(deriveFormHTML))
+		fmt.Fprintf(w, `<div class="error">Invalid form.</div>`)
+		return
+	}
+	S, _ := strconv.ParseFloat(r.FormValue("spot"), 64)
+	K, _ := strconv.ParseFloat(r.FormValue("strike"), 64)
+	days, _ := strconv.Atoi(r.FormValue("days"))
+	callPrem, _ := strconv.ParseFloat(r.FormValue("call_premium"), 64)
+	putPrem, _ := strconv.ParseFloat(r.FormValue("put_premium"), 64)
+	divPct, _ := strconv.ParseFloat(r.FormValue("div_pct"), 64)
+	q := divPct / 100
+
+	_, _ = w.Write([]byte(deriveFormHTML))
+	rPct, sigmaPct, err := payoff.DeriveRAndSigma(S, K, days, q, callPrem, putPrem)
+	if err != nil {
+		fmt.Fprintf(w, `<div class="error">%s</div>`, template.HTMLEscapeString(err.Error()))
+		return
+	}
+	fmt.Fprintf(w, `<div class="result"><strong>Implied risk-free rate r</strong> = %.4f%% &nbsp; <strong>Implied volatility σ</strong> = %.4f%%<br><span class="hint">Use these in the <a href="/">payoff chart</a> for Volatility %% and Risk-free rate %%.</span></div>`, rPct*100, sigmaPct*100)
 }
 
 func handleChart(w http.ResponseWriter, r *http.Request) {
