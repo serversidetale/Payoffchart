@@ -1,0 +1,29 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+/payoff
+/payoffserver
+
+# Go
+/vendor/
+*.test
+*.out
+go.work
+go.work.sum
+
+# Generated / local
+payoff.html
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
