@@ -1,11 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
+	"html"
 	"html/template"
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/payoffchart/internal/chart"
 	"github.com/payoffchart/internal/payoff"
@@ -355,6 +358,38 @@ func handleChart(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if daysToExpiry > 0 {
+		// Render chart to buffer so we can inject "change days" form
+		var chartBuf bytes.Buffer
+		if err := chart.RenderPayoff(&chartBuf, strategy, spotMin, spotMax, title, renderOpts); err != nil {
+			log.Printf("render: %v", err)
+			http.Error(w, "failed to render chart", http.StatusInternalServerError)
+			return
+		}
+		chartHTML := chartBuf.String()
+		// Build form to change days to expiry (resubmit with same strategy)
+		var formBuf strings.Builder
+		formBuf.WriteString(`<div style="margin:1rem 20px; padding:0.75rem; background:#f0f4f8; border-radius:6px; font-family:system-ui,sans-serif;"><form method="POST" action="/chart">`)
+		formBuf.WriteString(`<label>Days to expiry: <input type="number" name="days_to_expiry" value="` + strconv.Itoa(daysToExpiry) + `" min="1" style="width:4rem; padding:0.25rem;">`)
+		formBuf.WriteString(`</label> <button type="submit">Update before-expiry curve</button>`)
+		for key, vals := range r.Form {
+			if key == "days_to_expiry" {
+				continue
+			}
+			for _, v := range vals {
+				formBuf.WriteString(`<input type="hidden" name="` + html.EscapeString(key) + `" value="` + html.EscapeString(v) + `">`)
+			}
+		}
+		formBuf.WriteString(`</form></div>`)
+		// Inject form before </body>
+		if idx := strings.LastIndex(chartHTML, "</body>"); idx != -1 {
+			chartHTML = chartHTML[:idx] + formBuf.String() + "\n" + chartHTML[idx:]
+		}
+		if _, err := w.Write([]byte(chartHTML)); err != nil {
+			log.Printf("write: %v", err)
+		}
+		return
+	}
 	if err := chart.RenderPayoff(w, strategy, spotMin, spotMax, title, renderOpts); err != nil {
 		log.Printf("render: %v", err)
 		http.Error(w, "failed to render chart", http.StatusInternalServerError)
