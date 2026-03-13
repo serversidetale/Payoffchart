@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"html"
 	"html/template"
@@ -208,10 +209,25 @@ const deriveFormHTML = `<!DOCTYPE html>
 </html>
 `
 
+// cors wraps a handler to add CORS headers and handle OPTIONS preflight (for browser cross-origin calls).
+func cors(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		h(w, r)
+	}
+}
+
 func main() {
-	http.HandleFunc("/", handleForm)
-	http.HandleFunc("/chart", handleChart)
-	http.HandleFunc("/derive", handleDerive)
+	http.HandleFunc("/", cors(handleForm))
+	http.HandleFunc("/chart", cors(handleChart))
+	http.HandleFunc("/derive", cors(handleDerive))
+	http.HandleFunc("/api/chart", cors(handleChartJSON))
 	addr := ":8080"
 	log.Printf("Payoff chart server at http://localhost%s", addr)
 	log.Fatal(http.ListenAndServe(addr, nil))
@@ -254,6 +270,132 @@ func handleDerive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	fmt.Fprintf(w, `<div class="result"><strong>Implied risk-free rate r</strong> = %.4f%% &nbsp; <strong>Implied volatility σ</strong> = %.4f%%<br><span class="hint">Use these in the <a href="/">payoff chart</a> for Volatility %% and Risk-free rate %%.</span></div>`, rPct*100, sigmaPct*100)
+}
+
+// JSON API request types for POST /api/chart
+type legInput struct {
+	Type       string  `json:"type"`       // "call" or "put"
+	Side       string  `json:"side"`       // "long" or "short"
+	Strike     float64 `json:"strike"`
+	Premium    float64 `json:"premium"`
+	Contracts  int     `json:"contracts"`
+	Multiplier int     `json:"multiplier"`
+}
+
+type deriveInput struct {
+	Spot         float64 `json:"spot"`
+	Strike       float64 `json:"strike"`
+	Days         int     `json:"days"`
+	CallPremium  float64 `json:"call_premium"`
+	PutPremium   float64 `json:"put_premium"`
+	DivPct       float64 `json:"div_pct"`
+}
+
+type chartJSONRequest struct {
+	Title         string       `json:"title"`
+	SpotMin       float64      `json:"spot_min"`
+	SpotMax       float64      `json:"spot_max"`
+	DaysToExpiry  int          `json:"days_to_expiry"`
+	VolPct        float64      `json:"vol_pct"`
+	RatePct       float64      `json:"rate_pct"`
+	Legs          []legInput   `json:"legs"`
+	Derive        *deriveInput `json:"derive,omitempty"` // optional: use to derive vol_pct and rate_pct
+}
+
+func handleChartJSON(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req chartJSONRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	title := req.Title
+	if title == "" {
+		title = "Options Payoff"
+	}
+	spotMin, spotMax := req.SpotMin, req.SpotMax
+	if spotMin >= spotMax {
+		spotMin, spotMax = 90, 120
+	}
+	daysToExpiry := req.DaysToExpiry
+	volPct, ratePct := req.VolPct, req.RatePct
+	// If vol/rate not set and derive is provided, derive them from call/put premiums
+	if req.Derive != nil && req.Derive.Days > 0 {
+		rDec, sigmaDec, err := payoff.DeriveRAndSigma(
+			req.Derive.Spot, req.Derive.Strike, req.Derive.Days,
+			req.Derive.DivPct/100, req.Derive.CallPremium, req.Derive.PutPremium,
+		)
+		if err == nil {
+			volPct = sigmaDec * 100
+			ratePct = rDec * 100
+		}
+	}
+	vol := volPct / 100
+	rate := ratePct / 100
+
+	var strategy payoff.Strategy
+	for _, l := range req.Legs {
+		if l.Strike <= 0 {
+			continue
+		}
+		contracts := l.Contracts
+		if contracts <= 0 {
+			contracts = 1
+		}
+		mult := l.Multiplier
+		if mult <= 0 {
+			mult = payoff.DefaultMultiplier
+		}
+		leg := payoff.Leg{
+			Strike:     l.Strike,
+			Premium:    l.Premium,
+			Contracts:  contracts,
+			Multiplier: mult,
+		}
+		if l.Type == "put" {
+			leg.Type = payoff.Put
+		} else {
+			leg.Type = payoff.Call
+		}
+		if l.Side == "short" {
+			leg.Side = payoff.Short
+		} else {
+			leg.Side = payoff.Long
+		}
+		strategy = append(strategy, leg)
+	}
+	if len(strategy) == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "no valid legs (need at least one leg with strike > 0)"})
+		return
+	}
+
+	renderOpts := (*chart.RenderOpts)(nil)
+	if daysToExpiry > 0 {
+		renderOpts = &chart.RenderOpts{
+			DaysToExpiry: daysToExpiry,
+			Volatility:   vol,
+			RiskFreeRate: rate,
+		}
+	}
+	var chartBuf bytes.Buffer
+	if err := chart.RenderPayoff(&chartBuf, strategy, spotMin, spotMax, title, renderOpts); err != nil {
+		log.Printf("render: %v", err)
+		http.Error(w, "failed to render chart", http.StatusInternalServerError)
+		return
+	}
+	chartHTML := chartBuf.String()
+	stats := strategy.Stats(spotMin, spotMax, 500)
+	statsHTML := buildStatsHTML(stats)
+	if idx := strings.LastIndex(chartHTML, "</body>"); idx != -1 {
+		chartHTML = chartHTML[:idx] + statsHTML + "\n" + chartHTML[idx:]
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write([]byte(chartHTML))
 }
 
 func handleChart(w http.ResponseWriter, r *http.Request) {
