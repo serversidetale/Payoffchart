@@ -1,4 +1,4 @@
-module github.com/payoffchart
+module github.com/serversidetale/payoffchart
 
 go 1.21
 

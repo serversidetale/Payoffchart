@@ -2,6 +2,8 @@
 
 Generate **options payoff charts** (P&L at expiration vs underlying price) using [go-echarts](https://github.com/go-echarts/go-echarts). Output is a single HTML file you can open in a browser.
 
+Use it **as a library** in your own Go project (import `github.com/serversidetale/payoffchart/payoff` and `github.com/serversidetale/payoffchart/chart`) or **run the server** (forms + JSON API with CORS) for browser or HTTP clients.
+
 ## Quick start
 
 **CLI** (writes a static HTML file):
@@ -187,6 +189,77 @@ title := "Bull Call Spread"
 
 **Spreads / multi-leg:** add more legs to the same `Strategy` slice.
 
+## Using as a library
+
+Other Go projects can import this module and use the **payoff** and **chart** packages directly (no HTTP server required).
+
+**1. Add the dependency**
+
+If this repo is published (e.g. on GitHub), from your project run:
+
+```bash
+go get github.com/serversidetale/payoffchart
+```
+
+Or if using a local path or private module, ensure your project’s `go.mod` requires this module (replace with your actual module path if different).
+
+**2. Import the packages**
+
+- **`github.com/serversidetale/payoffchart/payoff`** — option legs, strategy, at-expiry payoff, Black–Scholes, implied vol/r from put–call parity.
+- **`github.com/serversidetale/payoffchart/chart`** — render payoff chart to HTML (uses go-echarts).
+
+**3. Example: build a strategy and render a chart**
+
+```go
+package main
+
+import (
+	"os"
+
+	"github.com/serversidetale/payoffchart/chart"
+	"github.com/serversidetale/payoffchart/payoff"
+)
+
+func main() {
+	strategy := payoff.Strategy{
+		{Type: payoff.Call, Side: payoff.Long, Strike: 100, Premium: 3.0, Contracts: 1, Multiplier: 100},
+		{Type: payoff.Call, Side: payoff.Short, Strike: 110, Premium: 1.0, Contracts: 1, Multiplier: 100},
+	}
+	f, _ := os.Create("payoff.html")
+	defer f.Close()
+	chart.RenderPayoff(f, strategy, 90, 120, "Bull Call Spread", nil)
+}
+```
+
+**4. Example: payoff math and stats only (no chart)**
+
+```go
+import "github.com/serversidetale/payoffchart/payoff"
+
+strategy := payoff.Strategy{
+	{Type: payoff.Call, Side: payoff.Long, Strike: 100, Premium: 3.0},
+}
+pnl := strategy.PayoffAt(105)                    // P&L at spot 105
+prices, payoffs := strategy.PayoffSeries(90, 120, 200)
+stats := strategy.Stats(90, 120, 500)            // MaxProfit, MaxLoss, RewardRisk, Breakevens
+r, sigma, _ := payoff.DeriveRAndSigma(1950, 1950, 8, 0, 130, 80)  // implied r and σ
+```
+
+**5. Before-expiry curve**
+
+Pass a non-nil `chart.RenderOpts` with `DaysToExpiry`, `Volatility`, and `RiskFreeRate` to add the Black–Scholes “before expiry” line:
+
+```go
+opts := &chart.RenderOpts{
+	DaysToExpiry: 30,
+	Volatility:   0.2,
+	RiskFreeRate: 0.05,
+}
+chart.RenderPayoff(w, strategy, spotMin, spotMax, title, opts)
+```
+
+The **chart** package depends on **go-echarts**; your project will get that dependency when it imports `github.com/serversidetale/payoffchart/chart`. If you only need payoff math and implied vol/r, import only **`github.com/serversidetale/payoffchart/payoff`** (no chart dependency).
+
 ## Project layout
 
 ```
@@ -194,9 +267,12 @@ PayOffChart/
 ├── cmd/
 │   ├── payoff/main.go         # CLI: builds strategy, writes payoff.html
 │   └── payoffserver/main.go   # HTTP server: form at /, chart at POST /chart
-├── internal/
-│   ├── payoff/leg.go          # Leg types and payoff math
-│   └── chart/chart.go         # go-echarts line chart from payoff data
+├── payoff/                    # Public package: legs, strategy, BS, implied r/σ
+│   ├── leg.go
+│   ├── bs.go
+│   └── implied.go
+├── chart/                     # Public package: render payoff chart to HTML
+│   └── chart.go
 ├── go.mod
 └── README.md
 ```

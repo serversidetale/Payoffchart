@@ -11,8 +11,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/payoffchart/internal/chart"
-	"github.com/payoffchart/internal/payoff"
+	"github.com/serversidetale/payoffchart/chart"
+	"github.com/serversidetale/payoffchart/payoff"
 )
 
 const formHTML = `<!DOCTYPE html>

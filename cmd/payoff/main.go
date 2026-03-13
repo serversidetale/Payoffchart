@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/payoffchart/internal/chart"
-	"github.com/payoffchart/internal/payoff"
+	"github.com/serversidetale/payoffchart/chart"
+	"github.com/serversidetale/payoffchart/payoff"
 )
 
 func main() {

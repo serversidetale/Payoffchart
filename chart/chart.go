@@ -6,7 +6,7 @@ import (
 
 	"github.com/go-echarts/go-echarts/v2/charts"
 	"github.com/go-echarts/go-echarts/v2/opts"
-	"github.com/payoffchart/internal/payoff"
+	"github.com/serversidetale/payoffchart/payoff"
 )
 
 // RenderOpts optionally adds a "before expiry" curve. Zero values mean at-expiry only.
